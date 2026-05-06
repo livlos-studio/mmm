@@ -1,0 +1,1190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>The Mayletts Marmot Mayhem</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; image-rendering: pixelated; }
+  html, body {
+    width: 100%; height: 100%;
+    margin: 0; padding: 0;
+    overflow: hidden;
+  }
+  body {
+    background: #0a0a1a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'Press Start 2P', monospace;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #game-outer {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  #scale-wrap {
+    transform-origin: center center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  #gw {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0;
+  }
+  #banner { display: block; margin-bottom: 6px; }
+  #hud {
+    display: flex;
+    justify-content: space-between;
+    width: 600px;
+    color: #ffe066;
+    font-size: 13px;
+    margin-bottom: 4px;
+    padding: 0 4px;
+  }
+  #gc { border: 3px solid #ffe066; display: block; }
+  #msg {
+    color: #aaa;
+    font-size: 6px;
+    margin-top: 5px;
+    text-align: center;
+    line-height: 2;
+  }
+  #touch-hint {
+    color: #555;
+    font-size: 6px;
+    margin-top: 3px;
+    text-align: center;
+    line-height: 2;
+    font-family: 'Press Start 2P', monospace;
+  }
+</style>
+</head>
+<body>
+<div id="game-outer">
+<div id="scale-wrap">
+<div id="gw">
+  <canvas id="banner" width="600" height="80"></canvas>
+  <div id="hud">
+    <span>SCORE: <span id="sv">0</span></span>
+    <span>SPEED: <span id="spv">1.0</span>x</span>
+    <span>HIGH SCORE: <span id="hv">0</span></span>
+  </div>
+  <canvas id="gc" width="600" height="360"></canvas>
+  <div id="msg">← → TO MOVE &nbsp;|&nbsp; SPACE TO JUMP &nbsp;|&nbsp; SPACE ON MENU TO START</div>
+</div>
+<div id="touch-hint">SWIPE LEFT/RIGHT TO MOVE &nbsp;|&nbsp; SWIPE UP TO JUMP</div>
+</div>
+</div>
+
+<script>
+// ============================================================
+//  THE MAYLETTS MARMOT MAYHEM — Complete Game
+//  The Official Maylett Family Arcade Experience
+// ============================================================
+
+// --- BANNER ---
+const bn = document.getElementById('banner'), bc = bn.getContext('2d');
+(function () {
+  bc.fillStyle = '#0a0a1a'; bc.fillRect(0, 0, 600, 80);
+  for (let y = 0; y < 80; y += 4) { bc.fillStyle = 'rgba(255,220,80,0.03)'; bc.fillRect(0, y, 600, 2); }
+  bc.font = 'bold 15px "Press Start 2P"'; bc.textAlign = 'center';
+  bc.shadowColor = '#ff6600'; bc.shadowBlur = 24; bc.fillStyle = '#ff6600';
+  bc.fillText('THE MAYLETTS MARMOT MAYHEM', 300, 34);
+  bc.shadowBlur = 10; bc.fillStyle = '#ffaa00'; bc.fillText('THE MAYLETTS MARMOT MAYHEM', 300, 34);
+  bc.shadowBlur = 0;
+  const g = bc.createLinearGradient(0, 18, 0, 42);
+  g.addColorStop(0, '#fff9aa'); g.addColorStop(0.4, '#ffe066');
+  g.addColorStop(0.6, '#ff8800'); g.addColorStop(1, '#cc4400');
+  bc.fillStyle = g; bc.fillText('THE MAYLETTS MARMOT MAYHEM', 300, 34);
+  bc.font = '7px "Press Start 2P"'; bc.shadowColor = '#00ffee'; bc.shadowBlur = 8;
+  bc.fillStyle = '#00ffee'; bc.fillText('* THE OFFICIAL MAYLETT FAMILY ARCADE EXPERIENCE *', 300, 56);
+  bc.shadowBlur = 0;
+  bc.strokeStyle = '#ff6600'; bc.lineWidth = 2; bc.strokeRect(2, 2, 596, 76);
+  bc.strokeStyle = '#ffaa00'; bc.lineWidth = 1; bc.strokeRect(5, 5, 590, 70);
+  [[10, 10], [590, 10], [10, 70], [590, 70]].forEach(([x, y]) => {
+    bc.fillStyle = '#ffe066'; bc.fillRect(x - 2, y - 2, 4, 4);
+    bc.fillStyle = '#fff'; bc.fillRect(x - 1, y - 1, 2, 2);
+  });
+})();
+
+// --- GAME SETUP ---
+const canvas = document.getElementById('gc'), ctx = canvas.getContext('2d');
+const W = 600, H = 360;
+const HORIZON_Y = H * 0.28;
+const LANE_X_BOT = [110, 300, 490];
+const LANE_X_TOP = [220, 300, 380];
+const GROUND_Y = H - 30;
+
+// Jump: 0.5s at 60fps = 30 frames
+const JUMP_DUR = 45;
+const JUMP_HEIGHT = 130;
+
+function laneXatY(li, y) {
+  const t = (y - HORIZON_Y) / (H - HORIZON_Y);
+  return LANE_X_TOP[li] + t * (LANE_X_BOT[li] - LANE_X_TOP[li]);
+}
+function perspScale(y) {
+  const t = Math.max(0, (y - HORIZON_Y) / (H - HORIZON_Y));
+  return 0.15 + 0.85 * t;
+}
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+let state = 'idle', score = 0, hi = 0, baseSpd = 2.8, spd = 2.8, frame = 0, spawnT = 0;
+let lane = 1, obs = [], particles = [], groundLines = [], popups = [];
+let deathT = 0, obsPassedCount = 0, elapsedSecs = 0, lastSecFrame = 0;
+let spawnRate = 100, weedOffset = 0, scoreTick = 0;
+let isJumping = false, jumpT = 0, jumpOffsetY = 0;
+
+const clouds = [
+  { x: 30,  y: HORIZON_Y - 70, w: 80, h: 20, spd: 0.12 },
+  { x: 170, y: HORIZON_Y - 90, w: 70, h: 18, spd: 0.08 },
+  { x: 320, y: HORIZON_Y - 60, w: 65, h: 16, spd: 0.14 },
+  { x: 450, y: HORIZON_Y - 80, w: 85, h: 22, spd: 0.09 },
+  { x: 540, y: HORIZON_Y - 55, w: 55, h: 14, spd: 0.11 },
+  { x: 100, y: HORIZON_Y -100, w: 45, h: 13, spd: 0.07 },
+  { x: 390, y: HORIZON_Y - 85, w: 50, h: 12, spd: 0.10 },
+  { x: -60, y: HORIZON_Y - 72, w: 75, h: 17, spd: 0.13 },
+];
+
+function initGroundLines() {
+  groundLines = [];
+  for (let i = 0; i < 18; i++) groundLines.push({ prog: i / 18 });
+}
+initGroundLines();
+
+const weedDefs = [];
+(function () {
+  const seeds = [
+    { s: 'L', ox: 15, d: 0.05 }, { s: 'L', ox: 35, d: 0.18 }, { s: 'L', ox: 8, d: 0.32 },
+    { s: 'L', ox: 28, d: 0.45 }, { s: 'L', ox: 12, d: 0.60 }, { s: 'L', ox: 40, d: 0.75 },
+    { s: 'L', ox: 5, d: 0.88 }, { s: 'L', ox: 22, d: 0.95 },
+    { s: 'R', ox: 15, d: 0.08 }, { s: 'R', ox: 30, d: 0.22 }, { s: 'R', ox: 10, d: 0.38 },
+    { s: 'R', ox: 25, d: 0.52 }, { s: 'R', ox: 18, d: 0.67 }, { s: 'R', ox: 38, d: 0.80 },
+    { s: 'R', ox: 8, d: 0.90 }, { s: 'R', ox: 20, d: 0.97 },
+  ];
+  seeds.forEach(s => weedDefs.push({ ...s, scrollBase: s.d }));
+})();
+
+// --- DRAW FUNCTIONS ---
+
+function drawMountains() {
+  [{ x: 0, w: 130, h: 110, c1: '#6a8ab0' }, { x: 70, w: 100, h: 85, c1: '#7a9ac0' }, { x: 130, w: 80, h: 70, c1: '#8aaacc' }].forEach(p => {
+    ctx.fillStyle = p.c1;
+    ctx.beginPath(); ctx.moveTo(p.x, HORIZON_Y); ctx.lineTo(p.x + p.w / 2, HORIZON_Y - p.h); ctx.lineTo(p.x + p.w, HORIZON_Y); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.beginPath(); ctx.moveTo(p.x + p.w / 2, HORIZON_Y - p.h); ctx.lineTo(p.x + p.w / 2 - p.w * 0.08, HORIZON_Y - p.h * 0.72); ctx.lineTo(p.x + p.w / 2 + p.w * 0.08, HORIZON_Y - p.h * 0.72); ctx.closePath(); ctx.fill();
+  });
+  [{ x: 470, w: 130, h: 100, c1: '#6a8ab0' }, { x: 430, w: 100, h: 80, c1: '#7a9ac0' }, { x: 510, w: 90, h: 65, c1: '#8aaacc' }].forEach(p => {
+    ctx.fillStyle = p.c1;
+    ctx.beginPath(); ctx.moveTo(p.x, HORIZON_Y); ctx.lineTo(p.x + p.w / 2, HORIZON_Y - p.h); ctx.lineTo(p.x + p.w, HORIZON_Y); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.beginPath(); ctx.moveTo(p.x + p.w / 2, HORIZON_Y - p.h); ctx.lineTo(p.x + p.w / 2 - p.w * 0.08, HORIZON_Y - p.h * 0.72); ctx.lineTo(p.x + p.w / 2 + p.w * 0.08, HORIZON_Y - p.h * 0.72); ctx.closePath(); ctx.fill();
+  });
+}
+
+function drawCabin() {
+  const cx = 300, cy = HORIZON_Y - 2;
+  const s = 1.875; // 25% smaller than 2.5
+
+  // Main body
+  ctx.fillStyle = '#6b3a1f';
+  ctx.fillRect(cx - 18*s, cy - 18*s, 36*s, 18*s);
+  // Log lines
+  ctx.fillStyle = '#5a2f18';
+  for (let i = 0; i < 5; i++) ctx.fillRect(cx - 18*s, cy - 4*s - i * 4*s, 36*s, 1.5);
+  // Roof
+  ctx.fillStyle = '#8a4a22';
+  ctx.beginPath();
+  ctx.moveTo(cx - 24*s, cy - 18*s);
+  ctx.lineTo(cx, cy - 36*s);
+  ctx.lineTo(cx + 24*s, cy - 18*s);
+  ctx.closePath(); ctx.fill();
+  // Roof shadow side
+  ctx.fillStyle = '#5a2f18';
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 36*s);
+  ctx.lineTo(cx + 24*s, cy - 18*s);
+  ctx.lineTo(cx + 3*s, cy - 18*s);
+  ctx.closePath(); ctx.fill();
+  // Chimney
+  ctx.fillStyle = '#555';
+  ctx.fillRect(cx + 8*s, cy - 42*s, 6*s, 22*s);
+  // Smoke puffs
+  ctx.fillStyle = 'rgba(200,200,200,0.55)';
+  ctx.fillRect(cx + 9*s, cy - 46*s, 5*s, 5*s);
+  ctx.fillRect(cx + 8*s, cy - 53*s, 7*s, 7*s);
+  ctx.fillRect(cx + 7*s, cy - 61*s, 8*s, 7*s);
+  // Door
+  ctx.fillStyle = '#3a1f0a';
+  ctx.fillRect(cx - 5*s, cy - 14*s, 10*s, 14*s);
+  // Windows
+  ctx.fillStyle = '#ffe8a0';
+  ctx.fillRect(cx - 16*s, cy - 15*s, 8*s, 8*s);
+  ctx.fillRect(cx + 8*s,  cy - 15*s, 8*s, 8*s);
+  // Window panes
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(cx - 12*s, cy - 15*s, 1.5, 8*s);
+  ctx.fillRect(cx + 12*s, cy - 15*s, 1.5, 8*s);
+  ctx.fillRect(cx - 16*s, cy - 11*s, 8*s, 1.5);
+  ctx.fillRect(cx + 8*s,  cy - 11*s, 8*s, 1.5);
+}
+
+function drawWeeds(woff) {
+  weedDefs.forEach(w => {
+    let d = (w.scrollBase + woff) % 1;
+    const y = HORIZON_Y + d * (H - HORIZON_Y);
+    const sc = 0.3 + d * 1.0;
+    let x;
+    if (w.s === 'L') { x = lerp(5, -30, d) + w.ox * sc * 0.4; if (x > 90) return; }
+    else { x = lerp(595, 630, d) - w.ox * sc * 0.4; if (x < 510) return; }
+    const h2 = 8 * sc, stalkW = Math.max(1, 2 * sc);
+    ctx.fillStyle = '#4a8a30'; ctx.fillRect(x - stalkW / 2, y - h2, stalkW, h2);
+    ctx.fillStyle = '#5aaa3a';
+    ctx.fillRect(x - 3 * sc, y - h2 * 0.6, 5 * sc, 2 * sc); ctx.fillRect(x - 1 * sc, y - h2 * 0.85, 4 * sc, 2 * sc);
+    ctx.fillStyle = '#8acc55'; ctx.fillRect(x - 2 * sc, y - h2 - 2 * sc, 4 * sc, 3 * sc);
+    if (w.ox % 3 === 0) {
+      ctx.fillStyle = '#7a9a50'; ctx.fillRect(x - 5 * sc, y - 3 * sc, 10 * sc, 5 * sc);
+      ctx.fillStyle = '#6a8a40'; ctx.fillRect(x - 3 * sc, y - 6 * sc, 8 * sc, 4 * sc);
+    }
+  });
+}
+
+// Pre-generate static path edge noise (run once)
+const PATH_NOISE = [];
+(function initPaths() {
+  const STEPS = 60;
+  for (let li = 0; li < 3; li++) {
+    const edges = [];
+    const phases = [Math.random()*6.28, Math.random()*6.28, Math.random()*6.28];
+    const amps   = [6, 3.5, 1.8];
+    const freqs  = [1.8, 3.5, 7];
+    for (let i = 0; i <= STEPS; i++) {
+      const t = i / STEPS;
+      let wl = 0, wr = 0;
+      for (let k = 0; k < 3; k++) {
+        wl += Math.sin(t * freqs[k] * Math.PI + phases[k]) * amps[k];
+        wr += Math.sin(t * freqs[k] * Math.PI + phases[k] + 1.3) * amps[k];
+      }
+      edges.push({ wl, wr });
+    }
+    PATH_NOISE.push(edges);
+  }
+})();
+
+// Static forest trees — pre-placed along edges and near horizon
+const FOREST_TREES = [];
+(function initForest() {
+  // Far left edge trees (just off-screen left)
+  const leftTrees = [
+    {x:-60, d:1.00}, {x:-20, d:0.96}, {x:-80, d:0.92}, {x:-35, d:0.88},
+    {x:-55, d:0.82}, {x:-15, d:0.76}, {x:-70, d:0.70}, {x:-40, d:0.63},
+    {x:-25, d:0.56}, {x:-60, d:0.48}, {x:-10, d:0.40}, {x:-45, d:0.32},
+    {x:-30, d:0.24}, {x:-55, d:0.16}, {x:-20, d:0.10}, {x:-40, d:0.05},
+  ];
+  // Far right edge trees (just off-screen right)
+  const rightTrees = [
+    {x:660, d:1.00}, {x:620, d:0.96}, {x:680, d:0.92}, {x:635, d:0.88},
+    {x:655, d:0.82}, {x:615, d:0.76}, {x:670, d:0.70}, {x:640, d:0.63},
+    {x:625, d:0.56}, {x:660, d:0.48}, {x:610, d:0.40}, {x:645, d:0.32},
+    {x:630, d:0.24}, {x:655, d:0.16}, {x:620, d:0.10}, {x:640, d:0.05},
+  ];
+
+  // Inner-left grass strip trees — between left path edge and screen edge, ON the green grass
+  // x range roughly 0..80 (between screen edge and left path)
+  const innerLeftTrees = [
+    {x:8,  d:0.95}, {x:38, d:0.90}, {x:18, d:0.84}, {x:55, d:0.78},
+    {x:28, d:0.72}, {x:12, d:0.65}, {x:48, d:0.58}, {x:32, d:0.51},
+    {x:20, d:0.44}, {x:60, d:0.37}, {x:15, d:0.30}, {x:42, d:0.23},
+    {x:30, d:0.17}, {x:52, d:0.11}, {x:22, d:0.06}, {x:45, d:0.03},
+  ];
+  // Inner-right grass strip trees — between right path edge and screen edge
+  // x range roughly 520..595
+  const innerRightTrees = [
+    {x:592, d:0.95}, {x:562, d:0.90}, {x:578, d:0.84}, {x:548, d:0.78},
+    {x:570, d:0.72}, {x:588, d:0.65}, {x:552, d:0.58}, {x:568, d:0.51},
+    {x:580, d:0.44}, {x:542, d:0.37}, {x:585, d:0.30}, {x:558, d:0.23},
+    {x:572, d:0.17}, {x:548, d:0.11}, {x:578, d:0.06}, {x:555, d:0.03},
+  ];
+
+  leftTrees.forEach(t       => FOREST_TREES.push({...t, side:'L'}));
+  rightTrees.forEach(t      => FOREST_TREES.push({...t, side:'R'}));
+  innerLeftTrees.forEach(t  => FOREST_TREES.push({...t, side:'IL'}));
+  innerRightTrees.forEach(t => FOREST_TREES.push({...t, side:'IR'}));
+
+  // Horizon scatter — small distant trees
+  [
+    {x:20,d:0.03},{x:55,d:0.04},{x:95,d:0.02},{x:140,d:0.05},{x:180,d:0.03},
+    {x:220,d:0.04},{x:370,d:0.03},{x:410,d:0.05},{x:450,d:0.02},
+    {x:490,d:0.04},{x:530,d:0.03},{x:570,d:0.05},{x:585,d:0.02},
+  ].forEach(t => FOREST_TREES.push({...t, side:'H'}));
+
+  // Sort back-to-front
+  FOREST_TREES.sort((a,b) => a.d - b.d);
+})();
+
+// Static grass/bush tufts along left edge of left path and right edge of right path
+const EDGE_GRASS = [];
+(function initEdgeGrass() {
+  const rng = (a,b) => a + Math.random()*(b-a);
+  // Left edge — scattered tufts
+  for (let i = 0; i < 22; i++) {
+    EDGE_GRASS.push({
+      side: 'L',
+      t: rng(0.05, 0.97),
+      ox: rng(-55, -4),
+      type: Math.random() < 0.55 ? 'bush' : 'grass',
+      h: rng(0.7, 1.8),
+      w: rng(0.6, 1.5),
+      shade: Math.floor(rng(0, 40)),
+    });
+  }
+  // Right edge
+  for (let i = 0; i < 22; i++) {
+    EDGE_GRASS.push({
+      side: 'R',
+      t: rng(0.05, 0.97),
+      ox: rng(4, 55),
+      type: Math.random() < 0.55 ? 'bush' : 'grass',
+      h: rng(0.7, 1.8),
+      w: rng(0.6, 1.5),
+      shade: Math.floor(rng(0, 40)),
+    });
+  }
+  EDGE_GRASS.sort((a,b) => a.t - b.t); // back to front
+})();
+
+function drawEvergreen(x, y, scale) {
+  const s = scale;
+  // Tall trunk — height scales with tree size
+  const trunkH = 28 * s;
+  const trunkW = 4 * s;
+  ctx.fillStyle = '#4a2808';
+  ctx.fillRect(x - trunkW * 0.5, y - trunkH * 0.2, trunkW, trunkH * 1.1);
+
+  // Ground shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  ctx.beginPath();
+  ctx.ellipse(x, y + 3*s, 20*s, 5*s, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // Many tiers — tall spire shape. Tiers stack high above ground.
+  // Total visual height ~160*s from ground up
+  const tiers = [
+    { dy:  0*s, w: 24*s, h: 18*s, c: '#173d17' },
+    { dy:-14*s, w: 21*s, h: 16*s, c: '#1a4d1a' },
+    { dy:-27*s, w: 18*s, h: 15*s, c: '#1e5c1e' },
+    { dy:-39*s, w: 15*s, h: 14*s, c: '#226622' },
+    { dy:-50*s, w: 13*s, h: 13*s, c: '#267326' },
+    { dy:-60*s, w: 11*s, h: 12*s, c: '#2a802a' },
+    { dy:-69*s, w: 9*s,  h: 11*s, c: '#2e8c2e' },
+    { dy:-77*s, w: 7*s,  h: 10*s, c: '#329932' },
+    { dy:-84*s, w: 5*s,  h: 9*s,  c: '#36a336' },
+    { dy:-90*s, w: 3*s,  h: 8*s,  c: '#3aad3a' },
+    { dy:-95*s, w: 2*s,  h: 6*s,  c: '#40b840' },
+  ];
+  tiers.forEach(tier => {
+    // Dark main face
+    ctx.fillStyle = tier.c;
+    ctx.beginPath();
+    ctx.moveTo(x,           y + tier.dy - tier.h);
+    ctx.lineTo(x + tier.w, y + tier.dy);
+    ctx.lineTo(x - tier.w, y + tier.dy);
+    ctx.closePath();
+    ctx.fill();
+    // Right face darker (shadow side)
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.beginPath();
+    ctx.moveTo(x,           y + tier.dy - tier.h);
+    ctx.lineTo(x + tier.w, y + tier.dy);
+    ctx.lineTo(x,           y + tier.dy);
+    ctx.closePath();
+    ctx.fill();
+    // Left face highlight
+    ctx.fillStyle = 'rgba(120,220,90,0.10)';
+    ctx.beginPath();
+    ctx.moveTo(x,           y + tier.dy - tier.h);
+    ctx.lineTo(x,           y + tier.dy);
+    ctx.lineTo(x - tier.w, y + tier.dy);
+    ctx.closePath();
+    ctx.fill();
+  });
+}
+
+function drawGrassTuft(x, y, sc, type, hw, shade) {
+  const baseG = 100 + shade;
+  if (type === 'grass') {
+    // 3-5 grass blades
+    const blades = 3 + Math.floor(hw * 2);
+    for (let b = 0; b < blades; b++) {
+      const bx = x + (b - blades/2) * 4 * sc;
+      const bh = (12 + shade * 0.3) * sc * hw;
+      const lean = (b - blades/2) * 2 * sc;
+      ctx.fillStyle = `rgb(${Math.floor(baseG*0.6)},${baseG + 40},${Math.floor(baseG*0.3)})`;
+      ctx.beginPath();
+      ctx.moveTo(bx - 2*sc, y);
+      ctx.lineTo(bx + 2*sc, y);
+      ctx.lineTo(bx + lean + 1*sc, y - bh);
+      ctx.lineTo(bx + lean - 1*sc, y - bh);
+      ctx.closePath();
+      ctx.fill();
+    }
+  } else {
+    // Rounded bush blob
+    const bw = (14 + shade * 0.2) * sc * hw;
+    const bh = (9 + shade * 0.15) * sc * hw;
+    ctx.fillStyle = `rgb(${Math.floor(baseG*0.5)},${baseG + 20},${Math.floor(baseG*0.25)})`;
+    ctx.beginPath();
+    ctx.ellipse(x, y - bh*0.5, bw, bh, 0, 0, Math.PI*2);
+    ctx.fill();
+    // lighter top cluster
+    ctx.fillStyle = `rgb(${Math.floor(baseG*0.6)},${baseG + 50},${Math.floor(baseG*0.3)})`;
+    ctx.beginPath();
+    ctx.ellipse(x - bw*0.2, y - bh*0.8, bw*0.55, bh*0.55, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(x + bw*0.25, y - bh*0.7, bw*0.45, bh*0.5, 0, 0, Math.PI*2);
+    ctx.fill();
+  }
+}
+
+function drawBg() {
+  // Sky
+  const sg = ctx.createLinearGradient(0, 0, 0, HORIZON_Y);
+  sg.addColorStop(0, '#1a3a6b'); sg.addColorStop(0.5, '#3a7abf'); sg.addColorStop(1, '#6ec6f0');
+  ctx.fillStyle = sg; ctx.fillRect(0, 0, W, HORIZON_Y);
+
+  // Base green ground
+  const gg = ctx.createLinearGradient(0, HORIZON_Y, 0, H);
+  gg.addColorStop(0, '#2d9e3a'); gg.addColorStop(0.4, '#3ab54a'); gg.addColorStop(1, '#4aca5a');
+  ctx.fillStyle = gg; ctx.fillRect(0, HORIZON_Y, W, H - HORIZON_Y);
+
+  // Horizon glow
+  ctx.fillStyle = 'rgba(200,240,160,0.22)'; ctx.fillRect(0, HORIZON_Y - 3, W, 5);
+
+  // Forest trees (back-to-front, drawn before paths so paths sit on top)
+  FOREST_TREES.forEach(ft => {
+    const y = HORIZON_Y + ft.d * (H - HORIZON_Y);
+    const baseScale = perspScale(y);
+    // outer edge trees tower; inner grass strip trees slightly smaller; horizon tiny
+    const mult = ft.side === 'H' ? 1.0
+               : ft.side === 'IL' || ft.side === 'IR' ? 1.6
+               : 2.2;
+    const sc = baseScale * mult;
+    drawEvergreen(ft.x, y, sc);
+  });
+
+  const STEPS = 60;
+
+  // Draw each trail as filled polygon with wavy edges
+  for (let li = 0; li < 3; li++) {
+    const xBot = LANE_X_BOT[li];
+    const xTop = LANE_X_TOP[li];
+    const noise = PATH_NOISE[li];
+
+    const leftPts = [], rightPts = [];
+    for (let i = 0; i <= STEPS; i++) {
+      const t = i / STEPS;
+      const y = HORIZON_Y + t * (H - HORIZON_Y);
+      const cx = xTop + t * (xBot - xTop);
+      const hw = 8 + t * 88;
+      const { wl, wr } = noise[i];
+      leftPts.push({ x: cx - hw + wl, y });
+      rightPts.push({ x: cx + hw + wr, y });
+    }
+
+    // Fill trail slice by slice with depth-tinted dirt
+    for (let i = 0; i < STEPS; i++) {
+      const t = i / STEPS;
+      const r = Math.floor(168 + t * 22);
+      const g = Math.floor(128 + t * 18);
+      const b = Math.floor(38 + t * 14);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.beginPath();
+      ctx.moveTo(leftPts[i].x,    leftPts[i].y);
+      ctx.lineTo(rightPts[i].x,   rightPts[i].y);
+      ctx.lineTo(rightPts[i+1].x, rightPts[i+1].y);
+      ctx.lineTo(leftPts[i+1].x,  leftPts[i+1].y);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Worn center highlight
+    ctx.save();
+    ctx.beginPath();
+    leftPts.forEach((p,i)=> i===0 ? ctx.moveTo(p.x,p.y) : ctx.lineTo(p.x,p.y));
+    [...rightPts].reverse().forEach(p=> ctx.lineTo(p.x,p.y));
+    ctx.closePath(); ctx.clip();
+    const hg = ctx.createLinearGradient(0, HORIZON_Y, 0, H);
+    hg.addColorStop(0, 'rgba(220,185,90,0.0)');
+    hg.addColorStop(0.3, 'rgba(220,185,90,0.08)');
+    hg.addColorStop(1, 'rgba(220,185,90,0.18)');
+    ctx.fillStyle = hg; ctx.fillRect(0, HORIZON_Y, W, H - HORIZON_Y);
+    ctx.restore();
+  }
+
+  // Edge grass/bushes along left of left path and right of right path (back to front)
+  EDGE_GRASS.forEach(eg => {
+    const t = eg.t;
+    const groundY = HORIZON_Y + t * (H - HORIZON_Y);
+    const sc = perspScale(groundY);
+    // Left edge: anchor to left side of left trail
+    // Right edge: anchor to right side of right trail
+    let baseX;
+    if (eg.side === 'L') {
+      const cx = LANE_X_TOP[0] + t * (LANE_X_BOT[0] - LANE_X_TOP[0]);
+      const hw = 8 + t * 88;
+      baseX = cx - hw + eg.ox * sc;
+    } else {
+      const cx = LANE_X_TOP[2] + t * (LANE_X_BOT[2] - LANE_X_TOP[2]);
+      const hw = 8 + t * 88;
+      baseX = cx + hw + eg.ox * sc;
+    }
+    drawGrassTuft(baseX, groundY, sc, eg.type, eg.w, eg.shade);
+  });
+
+  // Subtle horizontal depth lines
+  groundLines.forEach(gl => {
+    const y = HORIZON_Y + gl.prog * (H - HORIZON_Y);
+    ctx.strokeStyle = `rgba(50,120,30,${gl.prog * 0.12})`;
+    ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  });
+}
+
+
+
+function drawCloud(cl) {
+  ctx.fillStyle = 'rgba(255,255,255,0.88)';
+  ctx.fillRect(cl.x, cl.y, cl.w, cl.h);
+  ctx.fillRect(cl.x + cl.w * 0.1, cl.y - cl.h * 0.4, cl.w * 0.5, cl.h * 0.5);
+  ctx.fillRect(cl.x + cl.w * 0.45, cl.y - cl.h * 0.3, cl.w * 0.4, cl.h * 0.4);
+  ctx.fillStyle = 'rgba(255,255,255,1)'; ctx.fillRect(cl.x + 4, cl.y + 2, 6, 4);
+}
+
+function drawMarmot(laneIdx, dead) {
+  const bx = LANE_X_BOT[laneIdx];
+  const by = GROUND_Y + jumpOffsetY;
+  const blink = dead && Math.floor(frame / 4) % 2 === 0;
+  const s = 1.725;
+  function r(x, y, w, h) { ctx.fillRect(bx + x * s, by + y * s, w * s, h * s); }
+  const shadowScale = isJumping ? Math.max(0.2, 1 - Math.abs(jumpOffsetY) / JUMP_HEIGHT) : 1;
+  ctx.fillStyle = `rgba(0,0,0,${0.22 * shadowScale})`;
+  ctx.fillRect(bx - 22 * s * shadowScale, GROUND_Y + 4, 44 * s * shadowScale, 6 * s * shadowScale);
+  ctx.fillStyle = '#7a4e1a'; r(8, -8, 8, 5); r(13, -13, 5, 8);       // tail: dark brown
+  ctx.fillStyle = blink ? '#ff4444' : '#6b3a10'; r(-10, -18, 20, 16); // body: deep brown
+  ctx.fillStyle = blink ? '#ff7777' : '#7a4418'; r(-8, -30, 16, 14);  // head: slightly lighter
+  ctx.fillStyle = '#4a2408'; r(-9, -35, 5, 6); r(4, -35, 5, 6);       // ears: very dark
+  ctx.fillStyle = '#9a6030'; r(-4, -25, 8, 7);                         // snout: mid-brown
+  ctx.fillStyle = '#222'; r(-2, -27, 4, 3);
+  ctx.fillStyle = dead ? '#f00' : '#111'; r(-6, -28, 3, 3); r(3, -28, 3, 3);
+  if (!dead) { ctx.fillStyle = '#fff'; r(-5, -29, 1, 1); r(4, -29, 1, 1); }
+  ctx.fillStyle = '#4a2408';
+  if (isJumping) { r(-10, -1, 5, 7); r(5, -1, 5, 7); }
+  else {
+    const lp = Math.floor(frame / 5) % 2;
+    if (lp === 0) { r(-8, -2, 5, 9); r(3, 0, 5, 7); } else { r(-8, 0, 5, 7); r(3, -2, 5, 9); }
+  }
+}
+
+function drawObstacle(ob) {
+  const s = perspScale(ob.y) * 2, x = ob.x, y = ob.y;
+
+  // Ground shadow
+  const swx = ob.t === 'tree' ? 28*s : ob.t === 'rock' ? 22*s : 28*s;
+  const grd = ctx.createRadialGradient(x, y+4*s, 0, x, y+4*s, swx);
+  grd.addColorStop(0, `rgba(0,0,0,${0.45*perspScale(ob.y)})`);
+  grd.addColorStop(0.5, `rgba(0,0,0,${0.2*perspScale(ob.y)})`);
+  grd.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grd;
+  ctx.beginPath();
+  ctx.ellipse(x, y+4*s, swx, 7*s, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  if (ob.t === 'tree') {
+    // TOPPLED TREE — horizontal log across the trail
+    ctx.save();
+    ctx.translate(x, y);
+    // Main log body — lying flat, rotated slightly
+    const logAngle = 0.15; // slight tilt
+    ctx.rotate(logAngle);
+    // bark
+    ctx.fillStyle = '#5a3010';
+    ctx.fillRect(-28*s, -5*s, 56*s, 10*s);
+    // bark grain lines
+    ctx.fillStyle = '#3d1f08';
+    for (let i = -22; i < 28; i += 7) ctx.fillRect(i*s, -5*s, 2*s, 10*s);
+    // log end circle (left)
+    ctx.fillStyle = '#7a4520';
+    ctx.beginPath(); ctx.ellipse(-28*s, 0, 5*s, 5*s, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#5a3010';
+    ctx.beginPath(); ctx.ellipse(-28*s, 0, 3*s, 3*s, 0, 0, Math.PI*2); ctx.fill();
+    // log end circle (right — broken stump side)
+    ctx.fillStyle = '#7a4520';
+    ctx.beginPath(); ctx.ellipse(28*s, 0, 5*s, 5*s, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#c8a060'; // exposed wood rings
+    ctx.beginPath(); ctx.ellipse(28*s, 0, 4*s, 4*s, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#a07840';
+    ctx.beginPath(); ctx.ellipse(28*s, 0, 2.5*s, 2.5*s, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#7a5828';
+    ctx.beginPath(); ctx.ellipse(28*s, 0, 1.2*s, 1.2*s, 0, 0, Math.PI*2); ctx.fill();
+    // small broken branch stubs
+    ctx.fillStyle = '#5a3010';
+    ctx.fillRect(-10*s, -8*s, 4*s, 5*s);
+    ctx.fillRect(8*s,  -7*s, 3*s, 4*s);
+    ctx.fillRect(-2*s,  6*s, 4*s, 5*s);
+    // moss patches
+    ctx.fillStyle = 'rgba(60,140,40,0.35)';
+    ctx.fillRect(-20*s, -4*s, 12*s, 4*s);
+    ctx.fillRect(5*s,   -3*s, 10*s, 3*s);
+    ctx.restore();
+
+  } else if (ob.t === 'rock') {
+    // 6 ROCK STYLES based on ob.v (0-5)
+    const v = ob.v || 0;
+    const rockStyles = [
+      // 0: wide flat boulder
+      () => {
+        ctx.fillStyle='#7a7a7a'; ctx.beginPath(); ctx.ellipse(x,y-4*s,20*s,9*s,0,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='#999'; ctx.beginPath(); ctx.ellipse(x-4*s,y-7*s,10*s,5*s,0,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='rgba(255,255,255,0.2)'; ctx.beginPath(); ctx.ellipse(x-8*s,y-8*s,5*s,2*s,0,0,Math.PI*2); ctx.fill();
+      },
+      // 1: tall jagged rock
+      () => {
+        ctx.fillStyle='#666';
+        ctx.beginPath(); ctx.moveTo(x,y-20*s); ctx.lineTo(x+14*s,y); ctx.lineTo(x-14*s,y); ctx.closePath(); ctx.fill();
+        ctx.fillStyle='#888';
+        ctx.beginPath(); ctx.moveTo(x-4*s,y-18*s); ctx.lineTo(x+6*s,y); ctx.lineTo(x-14*s,y); ctx.closePath(); ctx.fill();
+        ctx.fillStyle='rgba(255,255,255,0.18)'; ctx.beginPath(); ctx.moveTo(x-4*s,y-18*s); ctx.lineTo(x-1*s,y-10*s); ctx.lineTo(x-10*s,y-4*s); ctx.closePath(); ctx.fill();
+      },
+      // 2: cluster of 3 rounded rocks
+      () => {
+        [[-10*s,0,9*s],[4*s,-3*s,7*s],[-2*s,2*s,6*s]].forEach(([rx,ry,r])=>{
+          ctx.fillStyle='#777'; ctx.beginPath(); ctx.ellipse(x+rx,y+ry,r,r*0.7,0,0,Math.PI*2); ctx.fill();
+          ctx.fillStyle='#999'; ctx.beginPath(); ctx.ellipse(x+rx-r*0.3,y+ry-r*0.3,r*0.4,r*0.25,0,0,Math.PI*2); ctx.fill();
+        });
+      },
+      // 3: mossy green-grey rock
+      () => {
+        ctx.fillStyle='#686860'; ctx.beginPath(); ctx.ellipse(x,y-6*s,16*s,10*s,0.2,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='rgba(60,120,30,0.55)'; ctx.beginPath(); ctx.ellipse(x-2*s,y-10*s,10*s,4*s,0,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='rgba(80,160,40,0.35)'; ctx.beginPath(); ctx.ellipse(x+4*s,y-8*s,6*s,3*s,0,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.ellipse(x-6*s,y-9*s,5*s,2*s,0,0,Math.PI*2); ctx.fill();
+      },
+      // 4: dark volcanic / obsidian sharp shard
+      () => {
+        ctx.fillStyle='#333';
+        ctx.beginPath(); ctx.moveTo(x-8*s,y); ctx.lineTo(x,y-22*s); ctx.lineTo(x+10*s,y-14*s); ctx.lineTo(x+12*s,y); ctx.closePath(); ctx.fill();
+        ctx.fillStyle='#555';
+        ctx.beginPath(); ctx.moveTo(x-8*s,y); ctx.lineTo(x,y-22*s); ctx.lineTo(x-2*s,y-10*s); ctx.closePath(); ctx.fill();
+        ctx.fillStyle='rgba(180,180,255,0.2)'; ctx.beginPath(); ctx.moveTo(x-2*s,y-20*s); ctx.lineTo(x+2*s,y-16*s); ctx.lineTo(x-4*s,y-8*s); ctx.closePath(); ctx.fill();
+      },
+      // 5: sandstone layered block
+      () => {
+        const cols=['#c8a060','#b8905a','#d4aa70','#a87840','#c09060'];
+        for(let i=0;i<5;i++){
+          ctx.fillStyle=cols[i];
+          ctx.fillRect(x-(18-i*1.5)*s, y-(4+i*4)*s, (36-i*3)*s, 4*s);
+        }
+        ctx.fillStyle='rgba(255,255,255,0.15)'; ctx.fillRect(x-16*s,y-20*s,8*s,2*s);
+      },
+    ];
+    rockStyles[v]();
+
+  } else {
+    // UTV — two color schemes: 'bg' = black/green, 'rw' = red/white
+    const bg = ob.v === 'bg';
+    const bodyCol  = bg ? '#1a2e1a' : '#cc1111';
+    const roofCol  = bg ? '#0d1a0d' : '#aa0000';
+    const accentCol= bg ? '#2a8a2a' : '#ffffff';
+    const wheelCol = '#111';
+    const hubCol   = bg ? '#3aaa3a' : '#dddddd';
+    const windCol  = bg ? '#4af04a' : '#cceeff';
+    const lightCol = bg ? '#aaffaa' : '#ffeeaa';
+
+    ctx.fillStyle = bodyCol;  ctx.fillRect(x-20*s, y-6*s*0.85, 40*s, 14*s*0.85);
+    ctx.fillStyle = roofCol;  ctx.fillRect(x-14*s, y-18*s*0.85, 28*s, 14*s*0.85);
+    // roll cage
+    ctx.fillStyle = accentCol;
+    ctx.fillRect(x-13*s, y-18*s*0.85, 2.5*s, 20*s*0.85);
+    ctx.fillRect(x+10*s, y-18*s*0.85, 2.5*s, 20*s*0.85);
+    ctx.fillRect(x-13*s, y-6*s*0.85,  26*s,  2.5*s);
+    // windshield
+    ctx.fillStyle = windCol;  ctx.fillRect(x-10*s, y-15*s*0.85, 20*s, 8*s*0.85);
+    // wheels
+    ctx.fillStyle = wheelCol; ctx.fillRect(x-20*s, y+4*s, 12*s, 7*s); ctx.fillRect(x+8*s, y+4*s, 12*s, 7*s);
+    ctx.fillStyle = hubCol;   ctx.fillRect(x-18*s, y+5*s, 8*s,  5*s); ctx.fillRect(x+10*s,y+5*s, 8*s,  5*s);
+    // headlights
+    ctx.fillStyle = lightCol; ctx.fillRect(x-16*s, y+11*s, 4*s, 3*s); ctx.fillRect(x+12*s, y+11*s, 4*s, 3*s);
+    // accent stripe
+    ctx.fillStyle = accentCol;
+    ctx.fillRect(x-18*s, y-2*s, 36*s, 2.5*s);
+  }
+}
+
+function getHB(ob) {
+  const s = perspScale(ob.y) * 2, x = ob.x;
+  if (ob.t === 'tree') return { x: x - 28*s, y: ob.y - 8*s, w: 56*s, h: 12*s }; // wide flat log
+  if (ob.t === 'rock') return { x: x - 18*s, y: ob.y - 20*s, w: 36*s, h: 22*s };
+  return { x: x - 20*s, y: ob.y - 18*s, w: 40*s, h: 26*s };
+}
+
+function checkHit() {
+  if (isJumping) return false;
+  const mx = LANE_X_BOT[lane], my = GROUND_Y;
+  const mb = { x: mx - 14, y: my - 48, w: 28, h: 54 };
+  for (const ob of obs) {
+    if (ob.y < H - 80 || ob.lane !== lane) continue;
+    const hb = getHB(ob);
+    if (mb.y < hb.y + hb.h && mb.y + mb.h > hb.y) return true;
+  }
+  return false;
+}
+
+function addParticles(x, y) {
+  for (let i = 0; i < 14; i++) {
+    const a = Math.random() * Math.PI * 2, v = 1 + Math.random() * 3;
+    particles.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 35, c: ['#ff4444', '#ffaa00', '#ffe066', '#ff8800'][Math.floor(Math.random() * 4)] });
+  }
+}
+
+function addPopup(x, y, pts) {
+  popups.push({ x, y, life: 50, vy: -1.4, pts });
+}
+
+function spawnObs() {
+  const types = ['tree', 'tree', 'rock', 'rock', 'utv'];
+  const t = types[Math.floor(Math.random() * types.length)];
+  const multi = spawnRate < 60 && Math.random() < 0.35;
+  const l1 = Math.floor(Math.random() * 3);
+  const v1 = t === 'rock' ? Math.floor(Math.random() * 6) : t === 'utv' ? (Math.random() < 0.5 ? 'bg' : 'rw') : 0;
+  obs.push({ x: laneXatY(l1, HORIZON_Y + 10), y: HORIZON_Y + 10, t, lane: l1, counted: false, jumped: false, v: v1 });
+  if (multi) {
+    let l2 = Math.floor(Math.random() * 3);
+    if (l2 === l1) l2 = (l1 + 1) % 3;
+    const t2 = types[Math.floor(Math.random() * types.length)];
+    const v2 = t2 === 'rock' ? Math.floor(Math.random() * 6) : t2 === 'utv' ? (Math.random() < 0.5 ? 'bg' : 'rw') : 0;
+    obs.push({ x: laneXatY(l2, HORIZON_Y + 10), y: HORIZON_Y + 10, t: t2, lane: l2, counted: false, jumped: false, v: v2 });
+  }
+}
+
+function updateJump() {
+  if (!isJumping) return;
+  jumpT++;
+  const progress = jumpT / JUMP_DUR;
+  jumpOffsetY = -JUMP_HEIGHT * 4 * progress * (1 - progress);
+
+  // Check if marmot jumped over an obstacle in the same lane this frame
+  if (!isJumping) return;
+  obs.forEach(o => {
+    if (o.jumped || o.counted || o.lane !== lane) return;
+    // obstacle is in the "danger zone" near the marmot
+    if (o.y > H - 120 && o.y < H + 20 && isJumping) {
+      o.jumped = true;
+    }
+  });
+
+  if (jumpT >= JUMP_DUR) { isJumping = false; jumpT = 0; jumpOffsetY = 0; sndLand(); }
+}
+
+// --- GAME LOOP ---
+
+function update() {
+  if (state !== 'playing') return;
+  frame++;
+
+  // Footsteps — pitter patter while on ground, every 12 frames
+  if (!isJumping && frame % 12 === 0) sndStep();
+  scoreTick++;
+  if (scoreTick >= 4) { scoreTick = 0; score++; }
+
+  weedOffset = (weedOffset + spd * 0.002) % 1;
+  // Drift clouds slowly left to right, wrap when off right edge
+  clouds.forEach(c => {
+    c.x += c.spd;
+    if (c.x > W + c.w) c.x = -c.w - 20;
+  });
+
+  if (frame - lastSecFrame >= 60) {
+    elapsedSecs++; lastSecFrame = frame;
+    if (elapsedSecs % 10 === 0) spawnRate = Math.max(28, spawnRate - 8);
+  }
+
+  groundLines.forEach(gl => { gl.prog += spd * 0.004; if (gl.prog > 1) gl.prog = 0; });
+
+  spawnT++;
+  if (spawnT > spawnRate) { spawnObs(); spawnT = 0; }
+
+  obs.forEach(o => {
+    const t = Math.max(0, (o.y - HORIZON_Y) / (H - HORIZON_Y));
+    o.y += spd * (0.3 + t * 1.4);
+    o.x = laneXatY(o.lane, o.y);
+
+    // Mark as jumped-over if marmot is airborne and obstacle is in the zone
+    if (!o.jumped && isJumping && o.lane === lane && o.y > H - 140 && o.y < H + 30) {
+      o.jumped = true;
+    }
+
+    if (!o.counted && o.y > H + 20) {
+      o.counted = true;
+      obsPassedCount++;
+      const pts = o.jumped ? 20 : 10; // 2x points for jumping over
+      score += pts;
+      addPopup(LANE_X_BOT[o.lane], H - 90, pts);
+      if (pts === 20) sndCheer();
+      spd = Math.min(baseSpd * Math.pow(1.01, obsPassedCount), 14);
+      document.getElementById('spv').textContent = (spd / baseSpd).toFixed(1);
+    }
+  });
+  obs = obs.filter(o => o.y < H + 80);
+
+  updateJump();
+
+  particles.forEach(p => { p.x += p.vx; p.y += p.vy; p.life--; });
+  particles = particles.filter(p => p.life > 0);
+  popups.forEach(p => { p.y += p.vy; p.life--; });
+  popups = popups.filter(p => p.life > 0);
+
+  if (checkHit()) {
+    addParticles(LANE_X_BOT[lane], GROUND_Y - 20);
+    state = 'dead'; deathT = 0;
+    if (score > hi) hi = score;
+  }
+  document.getElementById('sv').textContent = Math.floor(score);
+  document.getElementById('hv').textContent = Math.floor(hi);
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawBg();           // sky + ground + forest trees + paths + edge grass
+  clouds.forEach(drawCloud); // clouds behind cabin
+  drawCabin();        // cabin on horizon, in front of clouds
+
+  const sorted = [...obs].sort((a, b) => a.y - b.y);
+  sorted.forEach(drawObstacle);
+
+  particles.forEach(p => {
+    ctx.fillStyle = p.c; ctx.globalAlpha = p.life / 35;
+    ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
+  });
+  ctx.globalAlpha = 1;
+
+  drawMarmot(lane, state === 'dead');
+
+  // Score popups — 2x size (was 9px, now 18px)
+  popups.forEach(p => {
+    ctx.globalAlpha = Math.min(1, p.life / 25);
+    ctx.fillStyle = p.pts === 20 ? '#00ffee' : '#ffe066';
+    ctx.font = `bold 18px "Press Start 2P"`;
+    ctx.textAlign = 'center';
+    ctx.fillText('+' + p.pts, p.x, p.y);
+    ctx.textAlign = 'left';
+  });
+  ctx.globalAlpha = 1;
+
+  // Scanlines
+  ctx.fillStyle = 'rgba(0,0,0,0.04)';
+  for (let y = 0; y < H; y += 2) ctx.fillRect(0, y, W, 1);
+
+  // --- IDLE SCREEN ---
+  if (state === 'idle') {
+    ctx.fillStyle = 'rgba(0,0,0,0.78)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+
+    // Big title
+    ctx.shadowColor = '#ff6600'; ctx.shadowBlur = 22;
+    ctx.fillStyle = '#ffe066';
+    ctx.font = '23px "Press Start 2P"';
+    ctx.fillText('THE', W / 2, 38);
+    ctx.font = '30px "Press Start 2P"';
+    ctx.fillText('MAYLETTS', W / 2, 72);
+    ctx.fillText('MARMOT', W / 2, 108);
+    ctx.fillText('MAYHEM', W / 2, 144);
+    ctx.shadowBlur = 0;
+
+    // Story subtitle
+    ctx.fillStyle = '#00ffee'; ctx.font = '9px "Press Start 2P"';
+    ctx.fillText('I hear they have some tasty marmot', W / 2, 178);
+    ctx.fillText("snacks in that cabin! Let's go snatch 'em!", W / 2, 196);
+
+    // Warning line
+    ctx.fillStyle = '#ffaa44'; ctx.font = '8px "Press Start 2P"';
+    ctx.fillText('But beware — along the trail there are', W / 2, 220);
+    ctx.fillText('rocks, trees, and UTVs to avoid!', W / 2, 238);
+
+    // Controls hint
+    ctx.fillStyle = '#aaaaaa'; ctx.font = '7px "Press Start 2P"';
+    ctx.fillText('← → TO MOVE  |  SPACE TO JUMP', W / 2, 262);
+    ctx.fillText('JUMP OVER OBSTACLES FOR 2X POINTS!', W / 2, 278);
+
+    // Blinking start
+    const blink = Math.floor(frame / 30) % 2 === 0;
+    if (blink) { ctx.fillStyle = '#fff'; ctx.font = '12px "Press Start 2P"'; ctx.fillText('PRESS SPACE TO START', W / 2, 320); }
+
+    ctx.textAlign = 'left'; ctx.shadowBlur = 0;
+  }
+
+  // --- DEAD SCREEN ---
+  if (state === 'dead') {
+    deathT++;
+    ctx.fillStyle = 'rgba(0,0,0,0.72)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+
+    ctx.shadowColor = '#ff0000'; ctx.shadowBlur = 16;
+    ctx.fillStyle = '#ff4444'; ctx.font = '40px "Press Start 2P"';
+    ctx.fillText('GAME OVER!', W / 2, 70);
+    ctx.shadowBlur = 0;
+
+    ctx.font = '18px "Press Start 2P"'; ctx.fillStyle = '#ffe066';
+    ctx.fillText('SCORE: ' + Math.floor(score), W / 2, 140);
+    ctx.fillText('DODGED: ' + obsPassedCount, W / 2, 178);
+    ctx.fillText('MAX SPEED: ' + (spd / baseSpd).toFixed(1) + 'x', W / 2, 216);
+
+    if (score >= hi && score > 0) {
+      ctx.fillStyle = '#00ffee'; ctx.font = '18px "Press Start 2P"';
+      ctx.fillText('NEW HIGH SCORE!', W / 2, 258);
+    }
+
+    if (deathT > 70) {
+      const blink = Math.floor(deathT / 20) % 2 === 0;
+      if (blink) {
+        ctx.fillStyle = '#fff'; ctx.font = '16px "Press Start 2P"';
+        ctx.fillText('PRESS SPACE TO', W / 2, 308);
+        ctx.fillText('PLAY AGAIN', W / 2, 334);
+      }
+    }
+    ctx.textAlign = 'left'; ctx.shadowBlur = 0;
+  }
+}
+
+// ============================================================
+//  SOUND ENGINE — Web Audio API, no files needed
+// ============================================================
+let audioCtx = null;
+
+function getAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+// Core helper: play a tone with envelope
+function playTone(freq, type, startVol, endVol, dur, startTime, dest) {
+  const ac = getAudio();
+  const t = startTime || ac.currentTime;
+  const osc = ac.createOscillator();
+  const gain = ac.createGain();
+  osc.connect(gain);
+  gain.connect(dest || ac.destination);
+  osc.type = type || 'square';
+  osc.frequency.setValueAtTime(freq, t);
+  gain.gain.setValueAtTime(startVol, t);
+  gain.gain.linearRampToValueAtTime(endVol, t + dur);
+  osc.start(t);
+  osc.stop(t + dur + 0.01);
+}
+
+// Noise burst helper (for thud/swoosh)
+function playNoise(dur, filterFreq, vol, startTime) {
+  const ac = getAudio();
+  const t = startTime || ac.currentTime;
+  const bufSize = ac.sampleRate * dur;
+  const buf = ac.createBuffer(1, bufSize, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const filter = ac.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = filterFreq;
+  filter.Q.value = 0.8;
+  const gain = ac.createGain();
+  gain.gain.setValueAtTime(vol, t);
+  gain.gain.linearRampToValueAtTime(0, t + dur);
+  src.connect(filter);
+  filter.connect(gain);
+  gain.connect(ac.destination);
+  src.start(t);
+  src.stop(t + dur + 0.01);
+}
+
+// FOOTSTEP — soft alternating tap, called every ~12 frames while running
+let stepPhase = 0;
+function sndStep() {
+  const ac = getAudio();
+  stepPhase = 1 - stepPhase;
+  const freq = stepPhase ? 180 : 160;
+  playNoise(0.04, freq, 0.08);
+  playTone(freq * 0.5, 'sine', 0.06, 0, 0.04, null, ac.destination);
+}
+
+// JUMP — bright bouncy boing (square sweep up)
+function sndJump() {
+  const ac = getAudio();
+  const t = ac.currentTime;
+  const osc = ac.createOscillator();
+  const gain = ac.createGain();
+  osc.connect(gain); gain.connect(ac.destination);
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(220, t);
+  osc.frequency.exponentialRampToValueAtTime(660, t + 0.18);
+  gain.gain.setValueAtTime(0.18, t);
+  gain.gain.linearRampToValueAtTime(0, t + 0.22);
+  osc.start(t); osc.stop(t + 0.25);
+}
+
+// LAND — short low thud (noise + low sine)
+function sndLand() {
+  playNoise(0.08, 120, 0.22);
+  playTone(80, 'sine', 0.2, 0, 0.1);
+}
+
+// SWOOSH — quick filtered noise sweep for lane change
+function sndSwoosh() {
+  const ac = getAudio();
+  const t = ac.currentTime;
+  const bufSize = ac.sampleRate * 0.12;
+  const buf = ac.createBuffer(1, bufSize, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const filter = ac.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.setValueAtTime(800, t);
+  filter.frequency.linearRampToValueAtTime(2400, t + 0.12);
+  filter.Q.value = 1.5;
+  const gain = ac.createGain();
+  gain.gain.setValueAtTime(0.15, t);
+  gain.gain.linearRampToValueAtTime(0, t + 0.12);
+  src.connect(filter); filter.connect(gain); gain.connect(ac.destination);
+  src.start(t); src.stop(t + 0.14);
+}
+
+// CHEER / +20 — bright ascending arpeggio chime
+function sndCheer() {
+  const ac = getAudio();
+  const notes = [523, 659, 784, 1047]; // C5 E5 G5 C6
+  notes.forEach((freq, i) => {
+    const t = ac.currentTime + i * 0.07;
+    playTone(freq, 'triangle', 0.22, 0, 0.12, t);
+    // sparkle overtone
+    playTone(freq * 2, 'sine', 0.08, 0, 0.10, t);
+  });
+}
+
+// ============================================================
+
+function startGame() {
+  state = 'playing'; score = 0; frame = 0; scoreTick = 0;
+  baseSpd = 2.8; spd = 2.8; spawnRate = 100;
+  obsPassedCount = 0; elapsedSecs = 0; lastSecFrame = 0;
+  lane = 1; obs = []; particles = []; popups = []; spawnT = 0; weedOffset = 0;
+  isJumping = false; jumpT = 0; jumpOffsetY = 0;
+  initGroundLines();
+  document.getElementById('spv').textContent = '1.0';
+}
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (state === 'idle' || state === 'dead') { startGame(); return; }
+    if (state === 'playing' && !isJumping) { isJumping = true; jumpT = 0; sndJump(); }
+    return;
+  }
+  if (state !== 'playing') return;
+  if (e.code === 'ArrowLeft')  { e.preventDefault(); const prev=lane; lane = Math.max(0, lane - 1); if(lane!==prev) sndSwoosh(); }
+  if (e.code === 'ArrowRight') { e.preventDefault(); const prev=lane; lane = Math.min(2, lane + 1); if(lane!==prev) sndSwoosh(); }
+});
+
+loop();
+</script>
+<script>
+// ---- MOBILE SCALING ----
+// Scale the entire game to fit any screen width
+function scaleGame() {
+  const wrap = document.getElementById('scale-wrap');
+  const gameWidth = 606;   // canvas 600 + 3px border each side
+  const gameHeight = 508;  // banner 80 + gap 6 + hud 22 + gap 4 + canvas 366 + msg 14 + hint 16
+  const screenW = window.innerWidth;
+  const screenH = window.innerHeight;
+  const scale = Math.min(screenW / gameWidth, screenH / gameHeight) * 0.98;
+  wrap.style.transform = `scale(${scale})`;
+  wrap.style.transformOrigin = 'center center';
+}
+window.addEventListener('resize', scaleGame);
+window.addEventListener('load', scaleGame);
+// Also call after fonts load
+document.fonts.ready.then(scaleGame);
+
+// ---- TOUCH / SWIPE CONTROLS ----
+const SWIPE_THRESHOLD = 30; // px minimum to count as a swipe
+let touchStartX = 0, touchStartY = 0;
+let touchMoved = false;
+
+document.addEventListener('touchstart', e => {
+  touchStartX = e.touches[0].clientX;
+  touchStartY = e.touches[0].clientY;
+  touchMoved = false;
+  e.preventDefault();
+}, { passive: false });
+
+document.addEventListener('touchmove', e => {
+  touchMoved = true;
+  e.preventDefault();
+}, { passive: false });
+
+document.addEventListener('touchend', e => {
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  const dy = e.changedTouches[0].clientY - touchStartY;
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
+
+  // TAP (no real movement) — acts like Space bar (start / play again)
+  if (absDx < SWIPE_THRESHOLD && absDy < SWIPE_THRESHOLD) {
+    if (typeof state !== 'undefined') {
+      if (state === 'idle' || state === 'dead') {
+        startGame();
+      } else if (state === 'playing' && !isJumping) {
+        isJumping = true; jumpT = 0; sndJump();
+      }
+    }
+    e.preventDefault();
+    return;
+  }
+
+  // SWIPE — determine direction by whichever axis moved more
+  if (typeof state !== 'undefined' && state === 'playing') {
+    if (absDy > absDx && dy < -SWIPE_THRESHOLD) {
+      if (!isJumping) { isJumping = true; jumpT = 0; sndJump(); }
+    } else if (absDx > absDy) {
+      if (dx < -SWIPE_THRESHOLD) {
+        const prev = lane; lane = Math.max(0, lane - 1); if (lane !== prev) sndSwoosh();
+      } else if (dx > SWIPE_THRESHOLD) {
+        const prev = lane; lane = Math.min(2, lane + 1); if (lane !== prev) sndSwoosh();
+      }
+    }
+  } else if (typeof state !== 'undefined' && (state === 'idle' || state === 'dead')) {
+    // Any swipe on menu also starts the game
+    startGame();
+  }
+
+  e.preventDefault();
+}, { passive: false });
+</script>
+</body>
+</html>
